@@ -1,0 +1,8 @@
+.env
+.next/
+.next-build/
+node_modules/
+__pycache__/
+*.py[cod]
+*.log
+*.db
