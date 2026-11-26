@@ -213,12 +213,39 @@ def validate_target(target: TargetRequest, db: Session = Depends(get_db)):
     if any(urlsplit(item).hostname != root_host or origin(urlsplit(item)) != origin(urlsplit(root)) for item in normalized_scope):
         raise HTTPException(status_code=422, detail="Every in-scope URL must use the registered target host, scheme, and port.")
     normalized_out = [validate_public_http_url(item) for item in target.out_of_scope]
-    saved = Target(id=str(uuid.uuid4()), name=target.name, url=root, application_description=target.application_description,
-                   owner_contact=target.owner_contact,
-                   in_scope=normalized_scope, out_of_scope=normalized_out, authorization_confirmed=True)
-    db.add(saved)
+    identity = target_identity(root)
+    existing = [item for item in db.scalars(select(Target)).all() if target_identity(item.url) == identity]
+    if existing:
+        scan_counts = dict(db.execute(select(Scan.target_id, func.count(Scan.id)).group_by(Scan.target_id)).all())
+        saved = max(existing, key=lambda item: (scan_counts.get(item.id, 0), item.created_at.isoformat() if item.created_at else ""))
+        saved.name = target.name
+        saved.url = root
+        saved.application_description = target.application_description
+        saved.owner_contact = target.owner_contact
+        saved.in_scope = normalized_scope
+        saved.out_of_scope = normalized_out
+        saved.authorization_confirmed = True
+        message = "Authorization and scope updated on the existing target; existing report history was kept."
+    else:
+        saved = Target(id=str(uuid.uuid4()), name=target.name, url=root, application_description=target.application_description,
+                       owner_contact=target.owner_contact, in_scope=normalized_scope,
+                       out_of_scope=normalized_out, authorization_confirmed=True)
+        db.add(saved)
+        message = "Authorization and public URL checks passed. Target saved; no scan was started."
     db.commit()
-    return {"valid": True, "target": target_payload(saved), "message": "Authorization and public URL checks passed. Target saved; no scan was started."}
+    return {"valid": True, "target": target_payload(saved), "message": message}
+
+def target_identity(value: str):
+    parsed = urlsplit(value)
+    path = posixpath.normpath(unquote(parsed.path or "/"))
+    return origin(parsed), path
+
+def related_target_ids(target_id: str, db: Session) -> list[str]:
+    selected = db.get(Target, target_id)
+    if not selected:
+        return [target_id]
+    identity = target_identity(selected.url)
+    return [item.id for item in db.scalars(select(Target)).all() if target_identity(item.url) == identity]
 
 def target_payload(target: Target) -> dict:
     return {"id": target.id, "name": target.name, "url": target.url, "application_description": target.application_description, "owner_contact": target.owner_contact,
@@ -380,14 +407,27 @@ def start_passive_scan(target_id: str, config: ScanRequest, background_tasks: Ba
 
 @app.get("/targets")
 def list_targets(db: Session = Depends(get_db)):
-    return [target_payload(item) for item in db.scalars(select(Target).order_by(Target.created_at.desc())).all()]
+    rows = db.scalars(select(Target).order_by(Target.created_at.desc())).all()
+    scan_counts = dict(db.execute(select(Scan.target_id, func.count(Scan.id)).group_by(Scan.target_id)).all())
+    unique = {}
+    for item in rows:
+        key = target_identity(item.url)
+        current = unique.get(key)
+        if current is None or (scan_counts.get(item.id, 0), item.created_at) > (scan_counts.get(current.id, 0), current.created_at):
+            unique[key] = item
+    return [target_payload(item) for item in sorted(unique.values(), key=lambda item: item.created_at, reverse=True)]
 
 @app.get("/scans")
 def list_scans(target_id: str | None = None, db: Session = Depends(get_db)):
     query = select(Scan)
     if target_id:
-        query = query.where(Scan.target_id == target_id)
-    return [scan_payload(item, db) for item in db.scalars(query.order_by(Scan.created_at.desc())).all()]
+        query = query.where(Scan.target_id.in_(related_target_ids(target_id, db)))
+    records = db.scalars(query.order_by(Scan.created_at.desc())).all()
+    output = [scan_payload(item, db) for item in records]
+    if target_id:
+        for item in output:
+            item["target_id"] = target_id
+    return output
 
 def url_in_scope(candidate: str, target: Target) -> bool:
     try:
@@ -515,7 +555,7 @@ def import_zap_api(target_id: str = Form(...), file: UploadFile = File(...), db:
 def list_findings(target_id: str | None = None, verification: str | None = None, db: Session = Depends(get_db)):
     query = select(Finding)
     if target_id:
-        query = query.join(Scan, Finding.scan_id == Scan.id).where(Scan.target_id == target_id)
+        query = query.join(Scan, Finding.scan_id == Scan.id).where(Scan.target_id.in_(related_target_ids(target_id, db)))
     if verification:
         query = query.where(Finding.verification == verification)
     return [finding_payload(item) for item in db.scalars(query.order_by(Finding.created_at.desc())).all()]
