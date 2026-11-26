@@ -12,6 +12,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://assessment:assessment@database:5432/assessment}
       ZAP_BASE_URL: ${ZAP_BASE_URL:-http://zap:8080}
       ZAP_API_KEY: ${ZAP_API_KEY:-change-this-local-development-key}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      HF_MODEL: ${HF_MODEL:-Qwen/Qwen2.5-7B-Instruct:together}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
+      ENABLE_TRAINING_LAB: "true"
+      HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       database:
         condition: service_healthy
@@ -36,9 +42,29 @@ services:
     command: ["zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8080", "-config", "api.key=${ZAP_API_KEY:-change-this-local-development-key}", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true"]
     expose: ["8080"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS 'http://127.0.0.1:8080/JSON/core/view/version/?apikey=$${ZAP_API_KEY:-change-this-local-development-key}' >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/JSON/core/view/version/?apikey=$${ZAP_API_KEY:-change-this-local-development-key} >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
+  juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    ports: ["127.0.0.1:3001:3000"]
+    expose: ["3000"]
+  ollama:
+    image: ollama/ollama:latest
+    volumes: ["ollama-data:/root/.ollama"]
+    expose: ["11434"]
+    restart: unless-stopped
+  ollama-model:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull ${OLLAMA_MODEL:-qwen3:4b-instruct-2507-q4_K_M}"]
+    restart: "no"
 volumes:
   assessment-data:
+  ollama-data:
