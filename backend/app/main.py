@@ -195,7 +195,9 @@ async def health():
             try:
                 async with httpx.AsyncClient(timeout=5) as client:
                     response = await client.get("https://router.huggingface.co/v1/models", headers={"Authorization": "Bearer " + hf_token})
-                ai = {"status": "connected" if response.is_success else "error", "detail": "Hugging Face Inference Providers API responded" if response.is_success else f"Hugging Face returned HTTP {response.status_code}"}
+                # The catalog endpoint only validates the token/API route. It does not
+                # prove that the account can pay for an inference request.
+                ai = {"status": "configured" if response.is_success else "error", "detail": "Hugging Face token accepted; inference credits are checked when Qwen runs" if response.is_success else f"Hugging Face returned HTTP {response.status_code}"}
             except Exception as exc:
                 ai = {"status": "error", "detail": f"Hugging Face health check failed: {type(exc).__name__}"}
     else:
@@ -620,6 +622,11 @@ async def analyze_finding(finding_id: str, db: Session = Depends(get_db)):
                     json={"model": model_name, "temperature": 0.2, "max_tokens": 650, "messages": messages},
                 )
                 if not response.is_success:
+                    if response.status_code == 402:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Hugging Face accepted the token, but this account has no Inference Providers credits. Add prepaid credits or use an account with included inference credits, then retry.",
+                        )
                     try:
                         provider_error = response.json()
                         if isinstance(provider_error, dict):

@@ -8,3 +8,4 @@
 
 .import-workflow h2{font-size:17px;margin:5px 0}.import-workflow>p{font-size:12px;margin:0 0 15px}.import-workflow>p b{color:var(--ink)}.import-upload{position:relative;overflow:hidden}.import-upload input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.import-help{display:block;margin-top:9px;color:var(--muted);font-size:10px}.target-selector select{max-width:600px}
 .notice.error{background:#f7e5e4;border-color:#e6b8b6;color:#a32e32}
+.status.configured{color:var(--yellow)}.status.configured i{background:var(--yellow)}
