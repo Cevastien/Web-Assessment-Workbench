@@ -15,7 +15,7 @@ import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import func, inspect as sa_inspect, select, text
+from sqlalchemy import delete, func, inspect as sa_inspect, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
@@ -430,6 +430,17 @@ def list_scans(target_id: str | None = None, db: Session = Depends(get_db)):
         for item in output:
             item["target_id"] = target_id
     return output
+
+@app.delete("/scans/{scan_id}")
+@app.delete("/api/scans/{scan_id}")
+def delete_scan(scan_id: str, db: Session = Depends(get_db)):
+    scan = db.get(Scan, scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Imported audit not found.")
+    findings_deleted = db.execute(delete(Finding).where(Finding.scan_id == scan_id)).rowcount or 0
+    db.delete(scan)
+    db.commit()
+    return {"message": "Imported audit cleared.", "scan_id": scan_id, "findings_deleted": findings_deleted}
 
 def url_in_scope(candidate: str, target: Target) -> bool:
     try:
