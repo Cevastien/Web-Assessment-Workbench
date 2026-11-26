@@ -4,7 +4,7 @@ import unittest
 import uuid
 
 from fastapi import UploadFile
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -15,6 +15,9 @@ from app.models import Finding, Target
 class ZapImportTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        @event.listens_for(self.engine, "connect")
+        def enable_foreign_keys(connection, _record):
+            connection.execute("PRAGMA foreign_keys=ON")
         Base.metadata.create_all(self.engine)
         self.session = sessionmaker(bind=self.engine, expire_on_commit=False)()
         self.target = Target(id=str(uuid.uuid4()), name="Local test", url="https://93.184.216.34/app",

@@ -514,6 +514,10 @@ def import_zap(target_id: str, file: UploadFile = File(...), db: Session = Depen
     scan_id = str(uuid.uuid4())
     scan = Scan(id=scan_id, target_id=target.id, configuration={"source":"uploaded_zap_json", "active_scan":False}, raw_output=sanitize_json(report))
     db.add(scan)
+    # Findings reference this scan with a database FK. Without an ORM relationship,
+    # SQLAlchemy may flush findings before the scan row; explicitly flush the parent
+    # first while keeping both writes inside the same transaction.
+    db.flush()
     created = 0
     skipped = 0
     for alert in alerts:
