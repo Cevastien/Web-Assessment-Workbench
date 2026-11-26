@@ -1,6 +1,7 @@
 import html
 import asyncio
 import ipaddress
+import io
 import json
 import os
 import posixpath
@@ -162,7 +163,8 @@ async def check_http(url: str | None, path: str = "") -> dict:
 @app.get("/health")
 @app.get("/api/health")
 async def health():
-    zap = await check_http(os.getenv("ZAP_BASE_URL"), "/JSON/core/view/version/?apikey=" + os.getenv("ZAP_API_KEY", ""))
+    # ZAP runs on the assessor's laptop. This hosted app only ingests its JSON exports.
+    zap = {"status": "ready", "detail": "Ready for JSON Import"}
     database = {"status": "disconnected", "detail": "Not configured"}
     try:
         with engine.connect() as connection:
@@ -374,34 +376,7 @@ async def run_passive_zap_scan(scan_id: str):
 
 @app.post("/targets/{target_id}/scans")
 def start_passive_scan(target_id: str, config: ScanRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    target = db.get(Target, target_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found.")
-    if not target.authorization_confirmed:
-        raise HTTPException(status_code=403, detail="Explicit authorization must be recorded before scanning.")
-    if config.active_scan and not config.active_scan_authorized:
-        raise HTTPException(status_code=400, detail="Confirm that active testing is explicitly authorized for this target.")
-    if not os.getenv("ZAP_BASE_URL") or not os.getenv("ZAP_API_KEY"):
-        raise HTTPException(status_code=503, detail="OWASP ZAP is not connected. Start the local services and configure ZAP first.")
-    for item in target.in_scope:
-        validate_public_http_url(item)
-        if not url_in_scope(item, target):
-            raise HTTPException(status_code=422, detail="A registered URL no longer passes the current scope checks.")
-    active = db.scalar(select(Scan).where(Scan.target_id == target_id, Scan.status == "running"))
-    if active:
-        raise HTTPException(status_code=409, detail="A scan is already running for this target.")
-    scan = Scan(id=str(uuid.uuid4()), target_id=target.id, source="OWASP ZAP scoped assessment", status="running",
-                configuration={"mode": "recon_passive", "max_depth": config.max_depth, "max_children": config.max_children,
-                               "active_scan": config.active_scan, "active_scan_authorized": config.active_scan_authorized, "context_enforced": True}, raw_output={})
-    db.add(scan)
-    db.commit()
-    background_tasks.add_task(run_passive_zap_scan, scan.id)
-    message = "Bounded ZAP page discovery and passive checks started inside the registered scope."
-    if config.active_scan:
-        message += " Controlled active checks were also authorized and will run with a 2-minute limit."
-    else:
-        message += " No active attack scan is run."
-    return {"scan_id": scan.id, "status": "running", "message": message}
+    raise HTTPException(status_code=410, detail="Scanning is performed locally with OWASP ZAP. Export a JSON report and upload it here.")
 
 @app.get("/targets")
 def list_targets(db: Session = Depends(get_db)):
@@ -466,11 +441,22 @@ def import_zap(target_id: str, file: UploadFile = File(...), db: Session = Depen
     sites = report.get("site", []) if isinstance(report, dict) else []
     if not isinstance(sites, list):
         raise HTTPException(status_code=422, detail="ZAP JSON must contain a site list.")
-    alerts = [alert for site in sites if isinstance(site, dict) for alert in site.get("alerts", []) if isinstance(alert, dict)]
+    if not all(isinstance(site, dict) for site in sites):
+        raise HTTPException(status_code=422, detail="Each ZAP site entry must be a JSON object.")
+    if any(not isinstance(site.get("alerts", []), list) for site in sites):
+        raise HTTPException(status_code=422, detail="Each ZAP site's alerts value must be a list.")
+    alerts = [alert for site in sites for alert in site.get("alerts", []) if isinstance(alert, dict)]
     if len(alerts) > 1000:
         raise HTTPException(status_code=413, detail="ZAP report contains more than 1,000 alerts.")
     target_host = (urlsplit(target.url).hostname or "").lower().rstrip(".")
     report_hosts: set[str] = set()
+    for site in sites:
+        site_name = str(site.get("@name") or site.get("name") or "").strip()
+        if site_name:
+            candidate = site_name if "://" in site_name else "https://" + site_name.lstrip("/")
+            host = (urlsplit(candidate).hostname or "").lower().rstrip(".")
+            if host:
+                report_hosts.add(host)
     for alert in alerts:
         instances = alert.get("instances") or [{}]
         for instance in instances:
@@ -694,6 +680,71 @@ def assessment_report(scan_id: str, db: Session = Depends(get_db)):
     )
     from fastapi.responses import HTMLResponse
     return HTMLResponse(report, headers={"Content-Disposition":"attachment; filename=assessment-" + scan_id + ".html"})
+
+@app.get("/reports/{scan_id}/pdf")
+def assessment_report_pdf(scan_id: str, db: Session = Depends(get_db)):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from xml.sax.saxutils import escape
+
+    scan = db.get(Scan, scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    target = db.get(Target, scan.target_id)
+    findings = db.scalars(select(Finding).where(Finding.scan_id == scan_id).order_by(Finding.created_at)).all()
+    confirmed = [item for item in findings if item.verification == "confirmed"]
+    styles = getSampleStyleSheet()
+    styles["Title"].textColor = colors.HexColor("#e85002")
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=0.7*inch, leftMargin=0.7*inch,
+                                 topMargin=0.65*inch, bottomMargin=0.65*inch, title="Security Assessment Report")
+    story = [Paragraph("Security Assessment Report", styles["Title"]), Spacer(1, 12)]
+
+    def add(label: str, value: str):
+        story.append(Paragraph("<b>" + escape(label) + ":</b> " + escape(value or "Not provided"), styles["BodyText"]))
+        story.append(Spacer(1, 6))
+
+    add("Target", target.name + " (" + target.url + ")")
+    add("Application", target.application_description)
+    add("Authorized contact", target.owner_contact)
+    add("Assessment date", scan.created_at.isoformat())
+    story.extend([Paragraph("Assessment scope", styles["Heading2"]), Paragraph("In scope", styles["Heading3"])])
+    for url in target.in_scope:
+        story.append(Paragraph("• " + escape(url), styles["BodyText"]))
+    story.append(Paragraph("Out of scope", styles["Heading3"]))
+    for url in target.out_of_scope:
+        story.append(Paragraph("• " + escape(url), styles["BodyText"]))
+    story.extend([Paragraph("Methodology", styles["Heading2"]), Paragraph(
+        "OWASP ZAP JSON report exported by the assessor on a local workstation and uploaded to this dashboard. "
+        "The platform did not run a scanner. Findings below are included only after human confirmation.", styles["BodyText"]),
+        Paragraph("Confirmed findings (" + str(len(confirmed)) + ")", styles["Heading2"])])
+    for item in confirmed:
+        story.append(Paragraph(escape(item.title), styles["Heading3"]))
+        add("Assessor severity", item.assessor_severity or "Unassigned")
+        add("Scanner severity", item.scanner_severity)
+        add("Affected URL", item.url)
+        add("Description", item.description)
+        add("Evidence", item.evidence)
+        if item.ai_analysis:
+            result = item.ai_analysis.get("result", {})
+            add("AI explanation", str(result.get("explanation") or item.ai_explanation or ""))
+            add("AI recommended fix", str(result.get("remediation") or item.ai_remediation or ""))
+        else:
+            add("AI recommended fix", item.ai_remediation or "No AI recommendation recorded")
+        add("Assessor notes", item.assessor_comment)
+    if not confirmed:
+        story.append(Paragraph("No findings have been confirmed by an assessor.", styles["BodyText"]))
+    story.extend([Paragraph("Limitations", styles["Heading2"]), Paragraph(
+        "This report reflects uploaded scanner observations and assessor decisions only. AI explanations are advisory; "
+        "they do not establish exploitability or replace human verification.", styles["BodyText"])])
+    document.build(story)
+    from fastapi.responses import Response
+    return Response(buffer.getvalue(), media_type="application/pdf", headers={
+        "Content-Disposition": "attachment; filename=assessment-" + scan_id + ".pdf"
+    })
 
 @app.get("/api/reports/generate")
 def generate_report_api(scan_id: str | None = None, db: Session = Depends(get_db)):
