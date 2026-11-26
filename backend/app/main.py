@@ -469,6 +469,22 @@ def import_zap(target_id: str, file: UploadFile = File(...), db: Session = Depen
     alerts = [alert for site in sites if isinstance(site, dict) for alert in site.get("alerts", []) if isinstance(alert, dict)]
     if len(alerts) > 1000:
         raise HTTPException(status_code=413, detail="ZAP report contains more than 1,000 alerts.")
+    target_host = (urlsplit(target.url).hostname or "").lower().rstrip(".")
+    report_hosts: set[str] = set()
+    for alert in alerts:
+        instances = alert.get("instances") or [{}]
+        for instance in instances:
+            if isinstance(instance, dict):
+                candidate = str(instance.get("uri") or alert.get("url") or "")
+                try:
+                    host = (urlsplit(candidate).hostname or "").lower().rstrip(".")
+                    if host:
+                        report_hosts.add(host)
+                except ValueError:
+                    pass
+    if report_hosts and target_host not in report_hosts:
+        hosts = ", ".join(sorted(report_hosts)[:5])
+        raise HTTPException(status_code=422, detail=f"This report is for {hosts}, but the selected target is {target_host}. No data was imported. Choose a ZAP report generated for the selected target, or select/register the correct authorized target.")
     scan_id = str(uuid.uuid4())
     scan = Scan(id=scan_id, target_id=target.id, configuration={"source":"uploaded_zap_json", "active_scan":False}, raw_output=sanitize_json(report))
     db.add(scan)

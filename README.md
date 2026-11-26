@@ -55,6 +55,6 @@ To use hosted Hugging Face inference instead, set `AI_PROVIDER=huggingface`, `HF
 
 ## Implemented and unavailable items
 
-Implemented: target authorization and scope registration, public URL checks, local training target, live service health checks, ZAP passive observations, site path directory, ZAP JSON import, local Qwen explanations, human review decisions, and HTML reports.
+Implemented: target authorization and scope registration, public URL checks, local training target, live service health checks, scope-filtered ZAP JSON import, a report-backed finding path directory, Qwen explanations, human review decisions, and HTML reports. The hosted dashboard uses uploaded reports; it does not require a hosted ZAP scanner.
 
-Not implemented: Nmap port scans, authenticated target sessions, independent automated validation, PDF/Word report export, multi-user login, and public hosted scanner deployment. The Vercel address is a UI preview only. A publicly accessible scanner needs authentication and a protected backend deployment before it can run assessments.
+Not implemented: Nmap port scans, authenticated target sessions, independent automated validation, PDF/Word report export, multi-user login, and a deployed live-scanner service. The Vercel dashboard is connected to the Render API for report import, AI explanations, review decisions, and reports. Live scanning is not offered in the hosted dashboard; import a ZAP JSON report created for the selected authorized target.
