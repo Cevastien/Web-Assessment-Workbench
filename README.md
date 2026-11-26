@@ -51,7 +51,7 @@ The default model is `qwen3:4b-instruct-2507-q4_K_M`, the 2.5 GB local quantizat
 
 Choose **Ask Qwen to explain** on a finding to request a plain-language explanation, possible impact, a cautious severity suggestion, validation steps, and remediation. The backend redacts common secrets and email addresses before sending only scanner details and the affected URL path to the local model. The explanation is stored separately from ZAP evidence and does not confirm a vulnerability. Qwen explains scanner findings; it does not run scans or decide if a finding is real.
 
-To use hosted Hugging Face inference instead, set `AI_PROVIDER=huggingface`, `HF_MODEL=Qwen/Qwen2.5-7B-Instruct:together`, and add an access token with the Inference Providers permission to `.env`. This model is served through Together AI on Hugging Face Inference Providers. Hosted inference may incur charges; check your Hugging Face billing before using it. Keep the token server-side and never commit `.env`.
+To use hosted Hugging Face inference instead, set `AI_PROVIDER=huggingface`, `HF_MODEL=Qwen/Qwen3-4B-Instruct-2507:nscale`, and add an access token with the Inference Providers permission to `.env`. Hosted inference may incur charges; check your Hugging Face billing before using it. Keep the token server-side and never commit `.env`.
 
 ## Implemented and unavailable items
 

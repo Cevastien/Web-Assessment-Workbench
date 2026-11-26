@@ -18,7 +18,7 @@ services:
       - key: AI_PROVIDER
         value: huggingface
       - key: HF_MODEL
-        value: Qwen/Qwen2.5-7B-Instruct:together
+        value: Qwen/Qwen3-4B-Instruct-2507:nscale
       - key: HF_TOKEN
         sync: false
       - key: FRONTEND_ORIGINS
