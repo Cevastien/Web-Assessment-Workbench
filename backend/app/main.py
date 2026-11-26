@@ -620,7 +620,17 @@ async def analyze_finding(finding_id: str, db: Session = Depends(get_db)):
                     json={"model": model_name, "temperature": 0.2, "max_tokens": 650, "messages": messages},
                 )
                 if not response.is_success:
-                    raise HTTPException(status_code=502, detail=f"Hugging Face inference request failed (HTTP {response.status_code}).")
+                    try:
+                        provider_error = response.json()
+                        if isinstance(provider_error, dict):
+                            provider_error = provider_error.get("error", provider_error.get("message", ""))
+                            if isinstance(provider_error, dict):
+                                provider_error = provider_error.get("message", "")
+                    except ValueError:
+                        provider_error = response.text
+                    provider_error = redact_sensitive_text(str(provider_error))[:300]
+                    suffix = f": {provider_error}" if provider_error else ""
+                    raise HTTPException(status_code=502, detail=f"Hugging Face inference request failed (HTTP {response.status_code}){suffix}")
                 content = response.json()["choices"][0]["message"]["content"]
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
         analysis = json.loads(content)
